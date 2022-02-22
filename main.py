@@ -32,7 +32,7 @@ def search_yt(item):
     return {'source': info['formats'][0]['url'], 'title': info['title']}
 
 
-async def user_connected(contexto: discord.ext.commands.Context) -> bool | discord.VoiceChannel:
+async def user_connected(contexto: discord.ext.commands.Context):
     """
     Verifica se o usuario está conectado à um canal de voz.
 
