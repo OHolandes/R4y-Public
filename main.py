@@ -1,7 +1,10 @@
+import asyncio
 import discord
 from discord.ext import commands
+
 from youtube_dl import YoutubeDL
-import asyncio
+
+import sql
 
 intents = discord.Intents.default()
 intents.members = True
@@ -9,16 +12,14 @@ intents.members = True
 client = commands.Bot(commands.when_mentioned_or("!"), case_insensitive=True, intents=intents, description="Radialista")
 client.remove_command('help')
 _QUEUE = []
-_canal_aud_id = 938832934008406067  # id do canal de musica
-_pedidos_id = 938832825321398382  # id do canal de texto para comandos
-_CANAL_AUD: discord.VoiceChannel
-reprodutor: discord.VoiceClient
-_YDL_OPTIONS = {'format': 'bestaudio', 'noplaylist': 'True'}
+walk_man = None
+_YDL_OPTIONS = {'format': 'bestaudio', 'noplaylist': 'True', 'quiet' : 'True',
+                'no_color': 'True'}
 _FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
                    'options': '-vn'}
 
 
-def search_yt(item):
+def search_yt(item: str):
     """
     Pesquisa uma música.
 
@@ -26,9 +27,10 @@ def search_yt(item):
     """
     with YoutubeDL(_YDL_OPTIONS) as ydl:
         try:
-            info = ydl.extract_info(f"ytsearch:{str(item)}", download=False)['entries'][0]
+            info = ydl.extract_info(f"ytsearch:{item}", download=False)['entries'][0]
         except Exception:
             return False
+    # retorna a url e o titulo
     return {'source': info['formats'][0]['url'], 'title': info['title']}
 
 
@@ -55,59 +57,26 @@ async def ouvintes():
     :return: None
     """
     try:
-        if reprodutor.is_connected():
-            if len(reprodutor.channel.members) == 1:
-                await reprodutor.disconnect()
+        if walk_man.is_connected():
+            if len(walk_man.channel.members) == 1:
+                await walk_man.disconnect()
                 _QUEUE.clear()
                 return
     except Exception:
-        pass
+        return
 
 
-def play_next():
-    """
-    Toca a próxima música
-
-    :return: None
-    """
+def flow():
     if _QUEUE:
-        m_url = _QUEUE[0][0]['source']
         _QUEUE.pop(0)
+        walk_man.stop()
         try:
-            reprodutor.play(discord.FFmpegPCMAudio(m_url, **_FFMPEG_OPTIONS, executable="./ffmpeg"),
-                            after=lambda e: play_next())
-        except Exception as error:
-            print("Um erro bizarro ocorreu", error)
-
-
-async def play_music(ctx: discord.ext.commands.Context):
-    """
-    Toca uma música.
-
-    :param ctx: argumento tipo Context.
-    :return: None
-    """
-    global reprodutor
-    if _QUEUE:
-        m_url = _QUEUE[0][0]['source']
-        if not reprodutor.is_connected() or reprodutor is None:
-            reprodutor = await _QUEUE[0][1].connect()
+            next_music = _QUEUE[0]["source"]
+        except IndexError:
+            walk_man.pause()
         else:
-            await reprodutor.move_to(_QUEUE[0][1])
-        _QUEUE.pop(0)
-        try:
-            await ouvintes()
-            reprodutor.play(discord.FFmpegPCMAudio(m_url, **_FFMPEG_OPTIONS, executable="./ffmpeg"),
-                            after=lambda e: play_next())
-        except Exception as error:
-            print("Um erro bizarro ocorreu", error)
-    else:
-        embedvc = discord.Embed(
-            colour=1646116,
-            description='Não há músicas para eu tocar chará.'
-        )
-        await ctx.send(embed=embedvc)
-        await reprodutor.disconnect()
+            walk_man.play(discord.FFmpegPCMAudio(next_music, **_FFMPEG_OPTIONS, executable="./ffmpeg"),
+                            after=lambda x: flow())
 
 
 @client.event
@@ -132,30 +101,45 @@ async def play(ctx, *args):
     :param args: palavras-chaves para a busca.
     :return: None
     """
-    global reprodutor
-    global _CANAL_AUD
-    pedidos = client.get_channel(_pedidos_id)
-    if ctx.channel != pedidos:
+    global walk_man
+    SERV = sql.get_serv(ctx.guild.id)[0]
+    pedidos = client.get_channel(SERV[1])
+
+    if pedidos is None:
+        await ctx.send(ctx.author.mention + "Seu servidor não foi adicionado")
+        return
+
+    if ctx.channel.id != pedidos.id:
         embedvc = discord.Embed(
             colour=12255232,
             description=f'Você não está no meu canal de pedidos, vai lá em {pedidos.mention} e manda de novo.'
         )
         await ctx.send(embed=embedvc)
         return
-    query = " ".join(args)
-    _CANAL_AUD = client.get_channel(_canal_aud_id)
+
+    channel = client.get_channel(SERV[2])
     voice = await user_connected(ctx)
-    if (_CANAL_AUD is None and not voice) or (_CANAL_AUD is None or not voice):
+
+    if not all((channel, voice)) or not any((channel, voice)):
         embedvc = discord.Embed(
             colour=1646116,
             description='Para eu tocar uma música, se conecte a um canal de voz cara.'
         )
         await ctx.send(embed=embedvc)
         return
-    elif _CANAL_AUD == voice:
-        reprodutor = await _CANAL_AUD.connect()
+    elif channel == voice:
+        if walk_man is None:
+            await ctx.guild.change_voice_state(channel=voice)
+            walk_man = await voice.connect()
+
+        embedvc = discord.Embed(colour=32768)
+        embedvc.description = "**Buscando...**"
+        await ctx.send(embed=embedvc)
+
+        query = " ".join(args)
         song = search_yt(query)
-        if type(song) == bool:
+
+        if not song:
             embedvc = discord.Embed(
                 colour=12255232,
                 description='Hmmm... Algo deu errado Brow! Tente mudar ou configurar a playlist/'
@@ -163,21 +147,16 @@ async def play(ctx, *args):
             )
             await ctx.send(embed=embedvc)
         else:
-            embedvc = discord.Embed(
-                colour=32768,
-                description=f"**{song['title']}** adicionada à fila meu chapa!"
-            )
+            _QUEUE.append(song)
+            embedvc.description = f"**{song['title']}** adicionada há fila meu chapa!"
             await ctx.send(embed=embedvc)
-            _QUEUE.append([song, voice])
-
-            if not reprodutor.is_playing() and reprodutor.is_connected():
-                await play_music(ctx)
-            else:
-                embedvc = discord.Embed(
-                    colour=12255232,
-                    description="Não pude acessar meu local de trabalho!"
-                )
-                await ctx.send(embed=embedvc)
+            if not walk_man.is_playing():
+                m_url = _QUEUE[0]['source']
+                try:
+                    walk_man.play(discord.FFmpegPCMAudio(m_url, **_FFMPEG_OPTIONS, executable="./ffmpeg"),
+                                    after=lambda x: flow())
+                except Exception as error:
+                    print("Um erro bizarro ocorreu ao carregar o audio", error)
 
 
 @client.command(name="next", aliases=["n", "proximo", "outra"], help="Toco outra música no meu bloco de notas.")
@@ -189,14 +168,13 @@ async def _next(ctx):
     :param ctx: argumento tipo Context.
     :return: None
     """
-    if reprodutor:
+    if walk_man:
         embedvc = discord.Embed(
             colour=1646116,
             description=f"Vamos para a próxima..."
         )
         await ctx.send(embed=embedvc)
-        reprodutor.stop()
-        await play_music(ctx)
+        flow()
 
 
 @client.command(aliases=["lista", "playlist", "musicas"], help="Mostro meus pedidos de músicas.")
@@ -207,14 +185,16 @@ async def queue(ctx):
     :param ctx: argumento tipo Context.
     :return: None
     """
-    retval = ""
-    for i in range(len(_QUEUE)):
-        retval += f'**{i + 1} - **' + _QUEUE[i][0]['title'] + "\n"
+    music_info = ""
+    for index, music in enumerate(_QUEUE):
+        if index == 0:
+            music["title"] = f"**{music['title']}**"
+        music_info += "**{}** - {}\n".format(index+1, music["title"])
 
-    if retval != "":
+    if music_info:
         embedvc = discord.Embed(
             colour=12255232,
-            description=f"{retval}"
+            description=f"{music_info}"
         )
         await ctx.send(embed=embedvc)
     else:
@@ -225,7 +205,41 @@ async def queue(ctx):
         await ctx.send(embed=embedvc)
 
 
-@client.command(aliases=["comandos"], help="Pedidos aceitáveis.")
+@client.command(aliases=["rebobina", "fabrica"], help="Fico zero, versão de fabrica.")
+@commands.has_permissions(administrator=True)
+async def reset(ctx):
+    embedreset = discord.Embed(colour=1646116)
+    global walk_man
+
+    if walk_man is not None:
+        embedreset.description = "Hora do re-start."
+        await ctx.send(embed=embedreset)
+        walk_man.stop()
+        await walk_man.disconnect()
+        _QUEUE.clear()
+        walk_man = None
+    else:
+        embedreset.description = "Já estou zerado."
+        await ctx.send(embed=embedreset)
+
+
+@client.command(aliases=["set"], help="Adiciono ou apago seu servidor.")
+@commands.has_permissions(administrator=True)
+async def config(ctx, _cmd:str, _id_channel:int = 0, _id_voice:int = 0):
+    if _cmd == "+":
+        sql.add_serv(ctx.guild.id, _id_channel, _id_voice)
+        await ctx.send("Servidor adicionado.")
+    elif _cmd == "-":
+        sql._del(ctx.guild.id)
+        await ctx.send("Servidor apagado.")
+    elif _cmd == "#":
+        sql.update(ctx.guild.id, _id_channel, _id_voice)
+        await ctx.send("Servidor atualizado.")
+    else:
+        await ctx.send("Não entendi... Use: !help")
+
+
+@client.command(aliases=["comandos", "help"], help="Pedidos aceitáveis.")
 async def ajuda(ctx):
     """
     Comando de ajuda.
@@ -236,6 +250,8 @@ async def ajuda(ctx):
     helptxt = ''
     for command in client.commands:
         helptxt += f'**{command} | [{", ".join(command.aliases)}]** - {command.help}\n'
+    helptxt += "\n**!config**: Use !config + ID_CANAL_DE_TEXTO ID_CANAL_DE_VOZ para adicionar.\n**!config -** para apagar"
+    helptxt += " e **!config #** ID_CANAL_DE_TEXTO ID_CANAL_DE_VOZ para atualizar."
     embedhelp = discord.Embed(
         colour=1646116,
         title=f'Comandos do {client.user.name}',
@@ -245,4 +261,5 @@ async def ajuda(ctx):
     await ctx.send(embed=embedhelp)
 
 
-client.run('TOKEN AQUI')
+if __name__ == "__main__":
+    client.run('TOKEN HERE')
