@@ -263,4 +263,4 @@ async def ajuda(ctx):
 
 
 if __name__ == "__main__":
-    client.run('OTM4NTQ2NDM1NzIzNTE4MDEy.Yfr3ew.bYQW4k8TPVgJnK5rjOHE9_X4DFY')
+    client.run('TOKEN HERE')
