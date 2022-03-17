@@ -102,12 +102,13 @@ async def play(ctx, *args):
     :return: None
     """
     global walk_man
-    SERV = sql.get_serv(ctx.guild.id)[0]
-    pedidos = client.get_channel(SERV[1])
-
-    if pedidos is None:
-        await ctx.send(ctx.author.mention + "Seu servidor não foi adicionado")
+    try:
+        SERV = sql.get_serv(ctx.guild.id)[0]
+    except IndexError:
+        await ctx.send(ctx.author.mention + "Seu servidor não foi adicionado.")
         return
+
+    pedidos = client.get_channel(SERV[1])
 
     if ctx.channel.id != pedidos.id:
         embedvc = discord.Embed(
@@ -250,7 +251,7 @@ async def ajuda(ctx):
     helptxt = ''
     for command in client.commands:
         helptxt += f'**{command} | [{", ".join(command.aliases)}]** - {command.help}\n'
-    helptxt += "\n**!config**: Use !config + ID_CANAL_DE_TEXTO ID_CANAL_DE_VOZ para adicionar.\n**!config -** para apagar"
+    helptxt += "\n**!config**:\nUse !config + ID_CANAL_DE_TEXTO ID_CANAL_DE_VOZ para adicionar. **!config -** para apagar"
     helptxt += " e **!config #** ID_CANAL_DE_TEXTO ID_CANAL_DE_VOZ para atualizar."
     embedhelp = discord.Embed(
         colour=1646116,
@@ -262,4 +263,4 @@ async def ajuda(ctx):
 
 
 if __name__ == "__main__":
-    client.run('TOKEN HERE')
+    client.run('OTM4NTQ2NDM1NzIzNTE4MDEy.Yfr3ew.bYQW4k8TPVgJnK5rjOHE9_X4DFY')
