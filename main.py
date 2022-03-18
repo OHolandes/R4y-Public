@@ -4,6 +4,7 @@ from discord.ext import commands
 
 from youtube_dl import YoutubeDL
 
+from segredin import __token__
 import sql
 
 intents = discord.Intents.default()
@@ -263,4 +264,4 @@ async def ajuda(ctx):
 
 
 if __name__ == "__main__":
-    client.run('TOKEN HERE')
+    client.run(__token__)
